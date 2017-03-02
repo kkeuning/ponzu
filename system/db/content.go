@@ -36,6 +36,54 @@ func SetContent(target string, data url.Values) (int, error) {
 	return update(ns, id, data)
 }
 
+// UpdateContent inserts or updates values in the database.
+// Updated content will be merged into existing values from the database.
+// The `target` argument is a string made up of namespace:id (string:int)
+func UpdateContent(target string, data url.Values) (int, error) {
+	t := strings.Split(target, ":")
+	ns, id := t[0], t[1]
+
+	// check if content id == -1 (indicating new post).
+	// if so, run an insert which will assign the next auto incremented int.
+	// this is done because boltdb begins its bucket auto increment value at 0,
+	// which is the zero-value of an int in the Item struct field for ID.
+	// this is a problem when the original first post (with auto ID = 0) gets
+	// overwritten by any new post, originally having no ID, defauting to 0.
+	if id == "-1" {
+		return insert(ns, data)
+	}
+
+	// retrieve existing content from the database
+	existingContent, err := Content(target)
+	if err != nil {
+		return 0, err
+	}
+
+	// Unmarsal the existing values
+	s := item.Types[ns]()
+
+	err = json.Unmarshal(existingContent, &s)
+	if err != nil {
+		log.Println("Error decoding json while sorting", ns, ":", err)
+		return 0, err
+	}
+
+	// encode existing values into url.Values
+	enc := schema.NewEncoder()
+	vals := make(map[string][]string)
+	err = enc.Encode(s, vals)
+	if err != nil {
+		return 0, err
+	}
+
+	// merge updated data into vals
+	for k, v := range data {
+		vals[k] = v
+	}
+
+	return update(ns, id, vals)
+}
+
 func update(ns, id string, data url.Values) (int, error) {
 	var specifier string // i.e. __pending, __sorted, etc.
 	if strings.Contains(ns, "__") {
